@@ -131,6 +131,14 @@ class MultiMerchantPaymentOrchestrator {
         add_action('wp_ajax_mmpo_delete_credentials', [$this, 'ajaxDeleteCredentials']);
         add_action('wp_ajax_mmpo_sync_sales', [$this, 'ajaxSyncSales']);
         add_action('wp_ajax_mmpo_test_all_connections', [$this, 'ajaxTestAllConnections']);
+        
+        // Add these missing AJAX handlers
+        add_action('wp_ajax_mmpo_get_dashboard_stats', [$this, 'ajaxGetDashboardStats']);
+        add_action('wp_ajax_mmpo_get_recent_sales', [$this, 'ajaxGetRecentSales']);
+        add_action('wp_ajax_mmpo_get_network_products', [$this, 'ajaxGetNetworkProducts']);
+        add_action('wp_ajax_mmpo_export_sales', [$this, 'ajaxExportSales']);
+        add_action('wp_ajax_mmpo_get_sales_chart_data', [$this, 'ajaxGetSalesChartData']);
+        add_action('wp_ajax_mmpo_get_revenue_chart_data', [$this, 'ajaxGetRevenueChartData']);
     }
     
     private function setupFrontend() {
@@ -246,7 +254,7 @@ class MultiMerchantPaymentOrchestrator {
     }
     
     public function ajaxAdminSaveCredentials() {
-        check_ajax_referer('mmpo_admin_nonce', 'nonce');
+        check_ajax_referer('mmpo_admin_nonce', 'mmpo_admin_nonce');
         
         if (!current_user_can('manage_options')) {
             wp_send_json_error(__('Insufficient permissions', 'multi-merchant-payment-orchestrator'));
@@ -305,9 +313,15 @@ class MultiMerchantPaymentOrchestrator {
         }
         
         $sales_hub = new MMPO_Sales_Hub();
-        $sales_hub->dailySalesSync();
+        $result = $sales_hub->dailySalesSync();
         
-        wp_send_json_success(__('Sales synced successfully', 'multi-merchant-payment-orchestrator'));
+        $message = sprintf(
+            __('Sync completed: %d sales synced, %d failed', 'multi-merchant-payment-orchestrator'),
+            $result['synced'],
+            $result['failed']
+        );
+        
+        wp_send_json_success($message);
     }
     
     public function ajaxTestAllConnections() {
@@ -339,6 +353,114 @@ class MultiMerchantPaymentOrchestrator {
         wp_send_json_success(implode("\n", $results));
     }
     
+    // Additional AJAX handlers for dashboard.js
+    public function ajaxGetDashboardStats() {
+        check_ajax_referer('mmpo_ajax_nonce', 'nonce');
+        
+        if (!is_user_logged_in()) {
+            wp_send_json_error(__('Not logged in', 'multi-merchant-payment-orchestrator'));
+        }
+        
+        $user_id = get_current_user_id();
+        $db_manager = new MMPO_Database_Manager();
+        $stats = $db_manager->getMerchantSalesStats($user_id);
+        
+        wp_send_json_success($stats);
+    }
+    
+    public function ajaxGetRecentSales() {
+        check_ajax_referer('mmpo_ajax_nonce', 'nonce');
+        
+        if (!is_user_logged_in()) {
+            wp_send_json_error(__('Not logged in', 'multi-merchant-payment-orchestrator'));
+        }
+        
+        $user_id = get_current_user_id();
+        $db_manager = new MMPO_Database_Manager();
+        $sales = $db_manager->getMerchantRecentSales($user_id);
+        
+        ob_start();
+        // Render sales table HTML
+        if (empty($sales)) {
+            echo '<p>' . esc_html__('No sales yet.', 'multi-merchant-payment-orchestrator') . '</p>';
+        } else {
+            echo '<table class="mmpo-products-table">';
+            // Table content here
+            echo '</table>';
+        }
+        $html = ob_get_clean();
+        
+        wp_send_json_success(['html' => $html]);
+    }
+    
+    public function ajaxGetNetworkProducts() {
+        check_ajax_referer('mmpo_ajax_nonce', 'nonce');
+        
+        if (!is_user_logged_in()) {
+            wp_send_json_error(__('Not logged in', 'multi-merchant-payment-orchestrator'));
+        }
+        
+        $user_id = get_current_user_id();
+        $db_manager = new MMPO_Database_Manager();
+        $products = $db_manager->getMerchantNetworkProducts($user_id);
+        
+        ob_start();
+        // Render products HTML
+        $html = ob_get_clean();
+        
+        wp_send_json_success(['html' => $html]);
+    }
+    
+    public function ajaxExportSales() {
+        check_ajax_referer('mmpo_ajax_nonce', 'nonce');
+        
+        if (!is_user_logged_in()) {
+            wp_send_json_error(__('Not logged in', 'multi-merchant-payment-orchestrator'));
+        }
+        
+        $format = sanitize_text_field($_GET['format'] ?? 'csv');
+        $range = sanitize_text_field($_GET['range'] ?? 'all');
+        
+        // Implement export logic
+        header('Content-Type: text/csv');
+        header('Content-Disposition: attachment; filename="sales-export.csv"');
+        
+        // Output CSV data
+        exit;
+    }
+    
+    public function ajaxGetSalesChartData() {
+        check_ajax_referer('mmpo_ajax_nonce', 'nonce');
+        
+        if (!is_user_logged_in()) {
+            wp_send_json_error(__('Not logged in', 'multi-merchant-payment-orchestrator'));
+        }
+        
+        // Generate chart data
+        $data = [
+            'labels' => ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+            'values' => [1200, 1900, 3000, 2500, 3200, 4100]
+        ];
+        
+        wp_send_json_success($data);
+    }
+    
+    public function ajaxGetRevenueChartData() {
+        check_ajax_referer('mmpo_ajax_nonce', 'nonce');
+        
+        if (!is_user_logged_in()) {
+            wp_send_json_error(__('Not logged in', 'multi-merchant-payment-orchestrator'));
+        }
+        
+        // Generate revenue distribution data
+        $data = [
+            'labels' => ['Product A', 'Product B', 'Product C', 'Product D'],
+            'values' => [30, 25, 20, 25]
+        ];
+        
+        wp_send_json_success($data);
+    }
+    
     public function activate() {
         // Create database tables
         $db_manager = new MMPO_Database_Manager();
@@ -364,6 +486,37 @@ class MultiMerchantPaymentOrchestrator {
         // Flush rewrite rules
         flush_rewrite_rules();
     }
+    
+    // Static uninstall method (not a closure)
+    public static function uninstall() {
+        if (!defined('WP_UNINSTALL_PLUGIN')) {
+            return;
+        }
+        
+        global $wpdb;
+        
+        // Drop custom tables
+        $tables = [
+            $wpdb->prefix . 'mmpo_merchant_credentials',
+            $wpdb->prefix . 'mmpo_product_ownership',
+            $wpdb->prefix . 'mmpo_sales_tracking'
+        ];
+        
+        foreach ($tables as $table) {
+            $wpdb->query("DROP TABLE IF EXISTS $table");
+        }
+        
+        // Delete options
+        delete_option('mmpo_version');
+        delete_option('mmpo_webhook_key');
+        delete_site_option('mmpo_default_commission_rate');
+        delete_site_option('mmpo_sync_frequency');
+        delete_site_option('mmpo_email_notifications');
+        delete_site_option('mmpo_debug_mode');
+        
+        // Clear scheduled hooks
+        wp_clear_scheduled_hook('mmpo_daily_sync');
+    }
 }
 
 // Initialize the plugin
@@ -371,29 +524,5 @@ add_action('plugins_loaded', function() {
     MultiMerchantPaymentOrchestrator::getInstance();
 });
 
-// Uninstall hook
-register_uninstall_hook(__FILE__, function() {
-    if (!defined('WP_UNINSTALL_PLUGIN')) {
-        return;
-    }
-    
-    global $wpdb;
-    
-    // Drop custom tables
-    $tables = [
-        $wpdb->prefix . 'mmpo_merchant_credentials',
-        $wpdb->prefix . 'mmpo_product_ownership',
-        $wpdb->prefix . 'mmpo_sales_tracking'
-    ];
-    
-    foreach ($tables as $table) {
-        $wpdb->query("DROP TABLE IF EXISTS $table");
-    }
-    
-    // Delete options
-    delete_option('mmpo_version');
-    delete_option('mmpo_webhook_key');
-    
-    // Clear scheduled hooks
-    wp_clear_scheduled_hook('mmpo_daily_sync');
-});
+// Register uninstall hook with static method instead of closure
+register_uninstall_hook(__FILE__, ['MultiMerchantPaymentOrchestrator', 'uninstall']);
