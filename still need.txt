@@ -1,0 +1,2 @@
+assets/js/dashboard.js
+assets/css/admin.css
